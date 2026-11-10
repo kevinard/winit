@@ -205,6 +205,7 @@ impl SeatHandler for WinitState {
         _queue_handle: &QueueHandle<Self>,
         seat: WlSeat,
     ) {
+        if let Some(hub) = &self.drag_drop { hub.add_seat(seat.clone()); }
         self.seats.insert(seat.id(), WinitSeatState::new());
     }
 
@@ -214,6 +215,7 @@ impl SeatHandler for WinitState {
         _queue_handle: &QueueHandle<Self>,
         seat: WlSeat,
     ) {
+        if let Some(hub) = &self.drag_drop { hub.remove_seat(&seat.id()); }
         let _ = self.seats.remove(&seat.id());
         self.on_keyboard_destroy(&seat.id());
     }

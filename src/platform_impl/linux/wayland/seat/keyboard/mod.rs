@@ -134,14 +134,18 @@ impl Dispatch<WlKeyboard, KeyboardData, WinitState> for WinitState {
             WlKeyboardEvent::Key { key, state: WEnum::Value(WlKeyState::Pressed), .. } => {
                 let key = key + 8;
 
-                key_input(
+                if key_input(
                     keyboard_state,
                     &mut state.events_sink,
                     data,
                     key,
                     ElementState::Pressed,
                     false,
-                );
+                ) {
+                    if let Some(drag_drop) = &state.drag_drop {
+                        drag_drop.escape(&data.seat.id());
+                    }
+                }
 
                 let delay = match keyboard_state.repeat_info {
                     RepeatInfo::Repeat { delay, .. } => delay,
@@ -365,16 +369,24 @@ fn key_input(
     keycode: u32,
     state: ElementState,
     repeat: bool,
-) {
+) -> bool {
     let window_id = match *data.window_id.lock().unwrap() {
         Some(window_id) => window_id,
-        None => return,
+        None => return false,
     };
 
     let device_id = crate::event::DeviceId(crate::platform_impl::DeviceId::Wayland(DeviceId));
     if let Some(mut key_context) = keyboard_state.xkb_context.key_context() {
         let event = key_context.process_key_event(keycode, state, repeat);
+        let escape = !repeat
+            && state == ElementState::Pressed
+            && matches!(
+                &event.logical_key,
+                crate::keyboard::Key::Named(crate::keyboard::NamedKey::Escape)
+            );
         let event = WindowEvent::KeyboardInput { device_id, event, is_synthetic: false };
         event_sink.push_window_event(event, window_id);
+        return escape;
     }
+    false
 }

@@ -73,6 +73,18 @@ impl PointerHandler for WinitState {
 
             let window_id = wayland::make_wid(parent_surface);
 
+            if parent_surface == surface {
+                match event.kind {
+                    PointerEventKind::Press { button: 0x110, serial, .. }
+                    | PointerEventKind::Release { button: 0x110, serial, .. } => {
+                        if let Some(hub) = &self.drag_drop {
+                            hub.pointer(window_id, seat, serial, matches!(event.kind, PointerEventKind::Press { .. }));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             // Ensure that window exists.
             let mut window = match self.windows.get_mut().get_mut(&window_id) {
                 Some(window) => window.lock().unwrap(),
