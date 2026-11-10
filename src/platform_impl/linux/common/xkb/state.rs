@@ -96,6 +96,16 @@ impl XkbState {
         self.modifiers
     }
 
+    #[cfg(wayland_platform)]
+    pub fn effective_modifiers(&self) -> u32 {
+        unsafe {
+            (XKBH.xkb_state_serialize_mods)(
+                self.state.as_ptr(),
+                xkb_state_component::XKB_STATE_MODS_EFFECTIVE,
+            )
+        }
+    }
+
     pub fn update_modifiers(
         &mut self,
         mods_depressed: u32,
