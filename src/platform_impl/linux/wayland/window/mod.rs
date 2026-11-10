@@ -107,6 +107,26 @@ impl Window {
         let window =
             state.xdg_shell.create_window(surface.clone(), default_decorations, &queue_handle);
 
+        // Establish auxiliary ownership before the first commit/configure.
+        // Applying it after initial configuration retains a tiled initial size
+        // even if the compositor floats the window when its first buffer maps.
+        if let Some(parent) = &attributes.platform_specific.wayland_parent {
+            match &parent.window {
+                crate::platform_impl::Window::Wayland(parent) => {
+                    if parent.display != display {
+                        return Err(os_error!(OsError::Misc(
+                            "transient parent belongs to another Wayland connection",
+                        )));
+                    }
+                    window.set_parent(Some(&parent.window));
+                }
+                #[cfg(x11_platform)]
+                crate::platform_impl::Window::X(_) => {
+                    return Err(os_error!(OsError::Misc("transient parent is not a Wayland window")));
+                }
+            }
+        }
+
         let mut window_state = WindowState::new(
             event_loop_window_target.connection.clone(),
             &event_loop_window_target.queue_handle,

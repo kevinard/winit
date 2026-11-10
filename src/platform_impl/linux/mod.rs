@@ -73,6 +73,8 @@ impl ApplicationName {
 pub struct PlatformSpecificWindowAttributes {
     pub name: Option<ApplicationName>,
     pub activation_token: Option<ActivationToken>,
+    #[cfg(wayland_platform)]
+    pub wayland_parent: Option<Arc<crate::window::Window>>,
     #[cfg(x11_platform)]
     pub x11: X11WindowAttributes,
 }
@@ -96,6 +98,8 @@ impl Default for PlatformSpecificWindowAttributes {
         Self {
             name: None,
             activation_token: None,
+            #[cfg(wayland_platform)]
+            wayland_parent: None,
             #[cfg(x11_platform)]
             x11: X11WindowAttributes {
                 visual_id: None,
