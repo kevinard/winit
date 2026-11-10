@@ -16,6 +16,7 @@
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 use crate::event_loop::{ActiveEventLoop, EventLoop, EventLoopBuilder};
 use crate::monitor::MonitorHandle;
@@ -98,6 +99,14 @@ impl WindowExtWayland for Window {
 
 /// Additional methods on [`WindowAttributes`] that are specific to Wayland.
 pub trait WindowAttributesExtWayland {
+    /// Sets an existing window as the non-modal transient parent.
+    ///
+    /// The relationship is sent before the child's initial configure request,
+    /// allowing the compositor to choose auxiliary-window size and placement.
+    /// The parent must belong to the same Wayland event loop. Its native lifetime
+    /// is retained through creation; the application owns both windows afterward.
+    fn with_transient_parent(self, parent: Arc<Window>) -> Self;
+
     /// Build window with the given name.
     ///
     /// The `general` name sets an application ID, which should match the `.desktop`
@@ -109,6 +118,12 @@ pub trait WindowAttributesExtWayland {
 }
 
 impl WindowAttributesExtWayland for WindowAttributes {
+    #[inline]
+    fn with_transient_parent(mut self, parent: Arc<Window>) -> Self {
+        self.platform_specific.wayland_parent = Some(parent);
+        self
+    }
+
     #[inline]
     fn with_name(mut self, general: impl Into<String>, instance: impl Into<String>) -> Self {
         self.platform_specific.name =
