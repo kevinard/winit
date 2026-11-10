@@ -40,6 +40,7 @@ pub use state::WindowState;
 
 /// The Wayland window.
 pub struct Window {
+    keyboard_shortcuts:Option<super::keyboard_shortcuts::Hub>,
     foreign_parent: Option<super::foreign::Parent>,
     /// Reference to the underlying SCTK window.
     window: SctkWindow,
@@ -245,6 +246,7 @@ impl Window {
         event_loop_awakener.ping();
 
         Ok(Self {
+            keyboard_shortcuts:state.keyboard_shortcuts.clone(),
             foreign_parent,
             window,
             display,
@@ -264,6 +266,10 @@ impl Window {
 
     pub(crate) fn xdg_toplevel(&self) -> Option<NonNull<c_void>> {
         NonNull::new(self.window.xdg_toplevel().id().as_ptr().cast())
+    }
+
+    pub(crate) fn inhibit_keyboard_shortcuts(&self,changed:super::keyboard_shortcuts::Changed)->Option<super::keyboard_shortcuts::KeyboardShortcutsInhibitor> {
+        self.keyboard_shortcuts.as_ref()?.enable(self.window_id,self.window.wl_surface().clone(),self.event_loop_awakener.clone(),changed)
     }
 }
 
@@ -770,6 +776,7 @@ impl Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
+        if let Some(hub)=&self.keyboard_shortcuts{hub.retire(self.window_id,None);}
         self.foreign_parent.take();
         self.window_requests.closed.store(true, Ordering::Release);
         self.event_loop_awakener.ping();

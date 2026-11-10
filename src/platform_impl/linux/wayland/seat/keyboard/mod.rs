@@ -109,6 +109,9 @@ impl Dispatch<WlKeyboard, KeyboardData, WinitState> for WinitState {
                 }
 
                 *data.window_id.lock().unwrap() = Some(window_id);
+                if let Some(hub) = &state.keyboard_shortcuts {
+                    hub.enter(&data.seat.id(), window_id);
+                }
 
                 // The keyboard focus is considered as general focus.
                 if was_unfocused {
@@ -125,6 +128,9 @@ impl Dispatch<WlKeyboard, KeyboardData, WinitState> for WinitState {
             },
             WlKeyboardEvent::Leave { surface, .. } => {
                 let window_id = wayland::make_wid(&surface);
+                if let Some(hub) = &state.keyboard_shortcuts {
+                    hub.leave(&data.seat.id(), window_id);
+                }
 
                 // NOTE: we should drop the repeat regardless whether it was for the present
                 // window of for the window which just went gone.
