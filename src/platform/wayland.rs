@@ -80,11 +80,23 @@ impl<T> EventLoopBuilderExtWayland for EventLoopBuilder<T> {
 ///
 /// [`Window`]: crate::window::Window
 pub trait WindowExtWayland {
+    /// Request a token bound to recent input on this focused source window.
+    /// Returns unsupported without recent eligible input. Delivery uses
+    /// `WindowEvent::ActivationTokenDone`; callers must impose a reply deadline.
+    fn request_activation_token_for_input(&self) -> Result<crate::event_loop::AsyncRequestSerial, crate::error::NotSupportedError>;
     /// Returns `xdg_toplevel` of the window or [`None`] if the window is X11 window.
     fn xdg_toplevel(&self) -> Option<NonNull<c_void>>;
 }
 
 impl WindowExtWayland for Window {
+    fn request_activation_token_for_input(&self) -> Result<crate::event_loop::AsyncRequestSerial, crate::error::NotSupportedError> {
+        match &self.window {
+            #[cfg(x11_platform)]
+            crate::platform_impl::Window::X(_) => Err(crate::error::NotSupportedError::new()),
+            #[cfg(wayland_platform)]
+            crate::platform_impl::Window::Wayland(window) => window.request_activation_token_for_input(),
+        }
+    }
     #[inline]
     fn xdg_toplevel(&self) -> Option<NonNull<c_void>> {
         #[allow(clippy::single_match)]

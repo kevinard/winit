@@ -84,6 +84,20 @@ pub struct Request {
     at: Instant,
 }
 
+impl Request {
+    /// Bind an outgoing token to recent input on this exact source window.
+    pub fn configure_token(&self, token: &XdgActivationTokenV1, source: &WlSurface) -> bool {
+        if self.at.elapsed() > INPUT_AGE || !self.seat.is_alive()
+            || !source.is_alive() || self.source.wl_surface() != source
+        {
+            return false;
+        }
+        token.set_serial(self.serial, &self.seat);
+        token.set_surface(source);
+        true
+    }
+}
+
 impl std::fmt::Debug for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("User-input focus request")
