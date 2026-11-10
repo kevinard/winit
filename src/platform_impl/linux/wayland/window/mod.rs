@@ -61,6 +61,8 @@ pub struct Window {
 
     /// The state of the requested attention from the `xdg_activation`.
     attention_requested: Arc<AtomicBool>,
+    /// Most recent eligible input on this connection; no strong window owner.
+    focus_input: Option<super::types::focus::Input>,
 
     /// Handle to the main queue to perform requests.
     queue_handle: QueueHandle<WinitState>,
@@ -92,6 +94,7 @@ impl Window {
         let compositor = state.compositor_state.clone();
         let xdg_activation =
             state.xdg_activation.as_ref().map(|activation_state| activation_state.global().clone());
+        let focus_input = state.xdg_activation.as_ref().map(|activation| activation.input.clone());
         let display = event_loop_window_target.connection.display();
 
         let size: Size = attributes.inner_size.unwrap_or(LogicalSize::new(800., 600.).into());
@@ -190,6 +193,7 @@ impl Window {
         let window_requests = WindowRequests {
             redraw_requested: AtomicBool::new(true),
             closed: AtomicBool::new(false),
+            focus: Mutex::new(None),
         };
         let window_requests = Arc::new(window_requests);
         state.window_requests.get_mut().insert(window_id, window_requests.clone());
@@ -226,6 +230,7 @@ impl Window {
             queue_handle,
             xdg_activation,
             attention_requested: Arc::new(AtomicBool::new(false)),
+            focus_input,
             event_loop_awakener,
             window_requests,
             window_events_sink,
@@ -626,7 +631,15 @@ impl Window {
     }
 
     #[inline]
-    pub fn focus_window(&self) {}
+    pub fn focus_window(&self) {
+        if self.has_focus() {
+            return;
+        }
+        if let Some(input) = self.focus_input.as_ref().and_then(|input| input.capture()) {
+            *self.window_requests.focus.lock().unwrap() = Some(input);
+            self.event_loop_awakener.ping();
+        }
+    }
 
     #[inline]
     pub fn surface(&self) -> &WlSurface {
@@ -717,7 +730,7 @@ impl Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
-        self.window_requests.closed.store(true, Ordering::Relaxed);
+        self.window_requests.closed.store(true, Ordering::Release);
         self.event_loop_awakener.ping();
     }
 }
@@ -730,6 +743,8 @@ pub struct WindowRequests {
 
     /// Redraw Requested.
     pub redraw_requested: AtomicBool,
+    /// Latest focus request captures its source before the caller retires it.
+    pub focus: Mutex<Option<super::types::focus::Request>>,
 }
 
 impl WindowRequests {

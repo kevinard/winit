@@ -45,6 +45,33 @@ impl Dispatch<WlKeyboard, KeyboardData, WinitState> for WinitState {
             },
         };
 
+        let input = match &event {
+            WlKeyboardEvent::Enter {
+                surface, serial, ..
+            } => Some((wayland::make_wid(surface), *serial)),
+            WlKeyboardEvent::Key {
+                serial,
+                state: WEnum::Value(WlKeyState::Pressed),
+                ..
+            } => data
+                .window_id
+                .lock()
+                .unwrap()
+                .map(|window| (window, *serial)),
+            _ => None,
+        };
+        if let Some((window_id, serial)) = input {
+            if let (Some(activation), Some(window), Some(requests)) = (
+                state.xdg_activation.as_ref(),
+                state.windows.get_mut().get(&window_id),
+                state.window_requests.get_mut().get(&window_id),
+            ) {
+                activation
+                    .input
+                    .record(window, requests, &data.seat, serial);
+            }
+        }
+
         match event {
             WlKeyboardEvent::Keymap { format, fd, size } => match format {
                 WEnum::Value(format) => match format {

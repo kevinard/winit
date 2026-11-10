@@ -73,6 +73,16 @@ impl PointerHandler for WinitState {
 
             let window_id = wayland::make_wid(parent_surface);
 
+            if let PointerEventKind::Press { serial, .. } = event.kind {
+                if let (Some(activation), Some(window), Some(requests)) = (
+                    self.xdg_activation.as_ref(),
+                    self.windows.get_mut().get(&window_id),
+                    self.window_requests.get_mut().get(&window_id),
+                ) {
+                    activation.input.record(window, requests, seat, serial);
+                }
+            }
+
             // Ensure that window exists.
             let mut window = match self.windows.get_mut().get_mut(&window_id) {
                 Some(window) => window.lock().unwrap(),
