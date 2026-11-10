@@ -564,6 +564,21 @@ impl Window {
         Ok(serial)
     }
 
+    pub fn request_activation_token_for_input(&self) -> Result<AsyncRequestSerial, NotSupportedError> {
+        let global = self.xdg_activation.as_ref().ok_or_else(NotSupportedError::new)?;
+        let input = self.focus_input.as_ref().and_then(|input| input.capture())
+            .ok_or_else(NotSupportedError::new)?;
+        let serial = AsyncRequestSerial::get();
+        let token = global.get_activation_token(&self.queue_handle,
+            XdgActivationTokenData::Obtain((self.window_id, serial)));
+        if !input.configure_token(&token, self.surface()) {
+            token.destroy();
+            return Err(NotSupportedError::new());
+        }
+        token.commit();
+        Ok(serial)
+    }
+
     #[inline]
     pub fn set_cursor_grab(&self, mode: CursorGrabMode) -> Result<(), ExternalError> {
         self.window_state.lock().unwrap().set_cursor_grab(mode)
