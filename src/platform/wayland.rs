@@ -79,11 +79,22 @@ impl<T> EventLoopBuilderExtWayland for EventLoopBuilder<T> {
 ///
 /// [`Window`]: crate::window::Window
 pub trait WindowExtWayland {
+    /// Request focus-scoped inhibition. The returned guard reports actual
+    /// compositor permission; it expires on window retirement or final drop.
+    fn inhibit_keyboard_shortcuts(&self,changed:keyboard_shortcuts::Changed)->Option<keyboard_shortcuts::KeyboardShortcutsInhibitor>;
     /// Returns `xdg_toplevel` of the window or [`None`] if the window is X11 window.
     fn xdg_toplevel(&self) -> Option<NonNull<c_void>>;
 }
 
 impl WindowExtWayland for Window {
+    fn inhibit_keyboard_shortcuts(&self,changed:keyboard_shortcuts::Changed)->Option<keyboard_shortcuts::KeyboardShortcutsInhibitor> {
+        match &self.window {
+            #[cfg(x11_platform)]
+            crate::platform_impl::Window::X(_)=>{let _=changed;None},
+            #[cfg(wayland_platform)]
+            crate::platform_impl::Window::Wayland(window)=>window.inhibit_keyboard_shortcuts(changed),
+        }
+    }
     #[inline]
     fn xdg_toplevel(&self) -> Option<NonNull<c_void>> {
         #[allow(clippy::single_match)]
@@ -94,6 +105,11 @@ impl WindowExtWayland for Window {
             crate::platform_impl::Window::Wayland(window) => window.xdg_toplevel(),
         }
     }
+}
+
+/// Optional focus-scoped compositor keyboard-shortcut inhibition.
+pub mod keyboard_shortcuts {
+    pub use crate::platform_impl::wayland::keyboard_shortcuts::{Changed,KeyboardShortcutsInhibitor,Status};
 }
 
 /// Additional methods on [`WindowAttributes`] that are specific to Wayland.
