@@ -98,6 +98,10 @@ impl WindowExtWayland for Window {
 
 /// Additional methods on [`WindowAttributes`] that are specific to Wayland.
 pub trait WindowAttributesExtWayland {
+    /// Import an xdg-foreign-v2 parent before initial configuration, with an
+    /// optional xdg-dialog-v1 modal hint. Unavailable protocols are ignored.
+    fn with_foreign_parent(self, handle: String, modal: bool) -> Self;
+
     /// Build window with the given name.
     ///
     /// The `general` name sets an application ID, which should match the `.desktop`
@@ -109,6 +113,11 @@ pub trait WindowAttributesExtWayland {
 }
 
 impl WindowAttributesExtWayland for WindowAttributes {
+    fn with_foreign_parent(mut self, handle: String, modal: bool) -> Self {
+        self.platform_specific.wayland_foreign_parent = Some((handle, modal));
+        self
+    }
+
     #[inline]
     fn with_name(mut self, general: impl Into<String>, instance: impl Into<String>) -> Self {
         self.platform_specific.name =
