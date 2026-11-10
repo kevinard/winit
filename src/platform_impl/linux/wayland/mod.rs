@@ -17,6 +17,7 @@ pub use window::Window;
 mod event_loop;
 mod foreign;
 pub(crate) mod keyboard_shortcuts;
+pub(crate) mod drag_drop;
 mod output;
 mod seat;
 mod state;

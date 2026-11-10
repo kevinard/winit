@@ -73,6 +73,18 @@ impl PointerHandler for WinitState {
 
             let window_id = wayland::make_wid(parent_surface);
 
+            if parent_surface == surface {
+                match event.kind {
+                    PointerEventKind::Press { button: 0x110, serial, .. }
+                    | PointerEventKind::Release { button: 0x110, serial, .. } => {
+                        if let Some(hub) = &self.drag_drop {
+                            hub.pointer(window_id, seat, serial, matches!(event.kind, PointerEventKind::Press { .. }));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             if let PointerEventKind::Press { serial, .. } = event.kind {
                 if let (Some(activation), Some(window), Some(requests)) = (
                     self.xdg_activation.as_ref(),

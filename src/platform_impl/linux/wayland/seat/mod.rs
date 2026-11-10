@@ -214,6 +214,7 @@ impl SeatHandler for WinitState {
         seat: WlSeat,
     ) {
         if let Some(hub)=&self.keyboard_shortcuts{hub.add_seat(seat.clone());}
+        if let Some(hub) = &self.drag_drop { hub.add_seat(seat.clone()); }
         self.seats.insert(seat.id(), WinitSeatState::new());
     }
 
@@ -224,6 +225,7 @@ impl SeatHandler for WinitState {
         seat: WlSeat,
     ) {
         if let Some(hub)=&self.keyboard_shortcuts{hub.remove_seat(&seat.id());}
+        if let Some(hub) = &self.drag_drop { hub.remove_seat(&seat.id()); }
         let _ = self.seats.remove(&seat.id());
         self.on_keyboard_destroy(&seat.id());
     }

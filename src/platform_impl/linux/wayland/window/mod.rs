@@ -42,6 +42,7 @@ pub use state::WindowState;
 pub struct Window {
     keyboard_shortcuts:Option<super::keyboard_shortcuts::Hub>,
     foreign_parent: Option<super::foreign::Parent>,
+    drag_drop: Option<super::drag_drop::Hub>,
     /// Reference to the underlying SCTK window.
     window: SctkWindow,
 
@@ -248,6 +249,7 @@ impl Window {
         Ok(Self {
             keyboard_shortcuts:state.keyboard_shortcuts.clone(),
             foreign_parent,
+            drag_drop: state.drag_drop.clone(),
             window,
             display,
             monitors,
@@ -268,6 +270,10 @@ impl Window {
         NonNull::new(self.window.xdg_toplevel().id().as_ptr().cast())
     }
 
+    pub(crate) fn drag_drop(&self, changed: super::drag_drop::Changed) -> Option<super::drag_drop::DragDrop> {
+        self.drag_drop.as_ref()?.endpoint(self.window_id, self.window.wl_surface().clone(),
+            Arc::downgrade(&self.window_requests), self.event_loop_awakener.clone(), changed)
+    }
     pub(crate) fn inhibit_keyboard_shortcuts(&self,changed:super::keyboard_shortcuts::Changed)->Option<super::keyboard_shortcuts::KeyboardShortcutsInhibitor> {
         self.keyboard_shortcuts.as_ref()?.enable(self.window_id,self.window.wl_surface().clone(),self.event_loop_awakener.clone(),changed)
     }
@@ -779,6 +785,7 @@ impl Drop for Window {
         if let Some(hub)=&self.keyboard_shortcuts{hub.retire(self.window_id,None);}
         self.foreign_parent.take();
         self.window_requests.closed.store(true, Ordering::Release);
+        if let Some(hub) = &self.drag_drop { hub.close_window(self.window_id); }
         self.event_loop_awakener.ping();
     }
 }

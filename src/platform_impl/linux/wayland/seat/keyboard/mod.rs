@@ -185,7 +185,7 @@ impl Dispatch<WlKeyboard, KeyboardData, WinitState> for WinitState {
             } => {
                 let key = key + 8;
 
-                key_input(
+                if key_input(
                     keyboard_state,
                     &mut state.events_sink,
                     data,
@@ -193,7 +193,11 @@ impl Dispatch<WlKeyboard, KeyboardData, WinitState> for WinitState {
                     ElementState::Pressed,
                     Some(serial),
                     shortcuts.as_ref(),
-                );
+                ) {
+                    if let Some(drag_drop) = &state.drag_drop {
+                        drag_drop.escape(&data.seat.id());
+                    }
+                }
 
                 let delay = match keyboard_state.repeat_info {
                     RepeatInfo::Repeat { delay, .. } => delay,
@@ -454,11 +458,11 @@ fn key_input(
     state: ElementState,
     serial: Option<u32>,
     shortcuts: Option<&crate::platform_impl::wayland::keyboard_shortcuts::Hub>,
-) {
+) -> bool {
     let repeat = serial.is_none();
     let window_id = match *data.window_id.lock().unwrap() {
         Some(window_id) => window_id,
-        None => return,
+        None => return false,
     };
 
     if let Some(hub) = shortcuts {
@@ -481,19 +485,27 @@ fn key_input(
         };
         if consumed {
             keyboard_state.xkb_context.clear_shortcut_compose();
-            return;
+            return false;
         }
     }
     let device_id = crate::event::DeviceId(crate::platform_impl::DeviceId::Wayland(DeviceId));
     if let Some(mut key_context) = keyboard_state.xkb_context.key_context() {
         let event = key_context.process_key_event(keycode, state, repeat);
+        let escape = !repeat
+            && state == ElementState::Pressed
+            && matches!(
+                &event.logical_key,
+                crate::keyboard::Key::Named(crate::keyboard::NamedKey::Escape)
+            );
         let event = WindowEvent::KeyboardInput {
             device_id,
             event,
             is_synthetic: false,
         };
         event_sink.push_window_event(event, window_id);
+        return escape;
     }
+    false
 }
 
 fn recording_modifiers(
