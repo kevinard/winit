@@ -18,6 +18,7 @@ use rustix::pipe::{self, PipeFlags};
 use sctk::reexports::calloop::Error as CalloopError;
 use sctk::reexports::calloop_wayland_source::WaylandSource;
 use sctk::reexports::client::{globals, Connection, QueueHandle};
+use sctk::shell::WaylandSurface;
 use tracing::warn;
 
 use crate::cursor::OnlyCursorImage;
@@ -471,10 +472,41 @@ impl<T: 'static> EventLoop<T> {
             window_ids.extend(state.window_requests.get_mut().keys());
         });
 
+        // Capture/submit focus before retiring closed windows. The request owns
+        // its input source role until activation completes or its timer expires.
+        self.with_state(|state| {
+            for window_id in window_ids.iter() {
+                let requests = state.window_requests.get_mut().get(window_id).unwrap().clone();
+                let input = requests.focus.lock().unwrap().take();
+                if let Some(input) = input {
+                    if requests.closed.load(Ordering::Acquire) {
+                        continue;
+                    }
+                    let target = state
+                        .windows
+                        .get_mut()
+                        .get(window_id)
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .window
+                        .wl_surface()
+                        .clone();
+                    let handle = state.loop_handle.clone();
+                    if let Some(activation) = state.xdg_activation.as_mut() {
+                        activation.request_focus(*window_id, &requests, target, input, &handle);
+                    }
+                }
+            }
+        });
+
         for window_id in window_ids.iter() {
             let event = self.with_state(|state| {
                 let window_requests = state.window_requests.get_mut();
                 if window_requests.get(window_id).unwrap().take_closed() {
+                    if let Some(activation) = state.xdg_activation.as_mut() {
+                        activation.focus.retire(*window_id, &state.loop_handle);
+                    }
                     mem::drop(window_requests.remove(window_id));
                     mem::drop(state.windows.get_mut().remove(window_id));
                     return Some(WindowEvent::Destroyed);

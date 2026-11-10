@@ -1309,7 +1309,11 @@ impl Window {
     ///
     /// ## Platform-specific
     ///
-    /// - **iOS / Android / Wayland / Orbital:** Unsupported.
+    /// - **Wayland:** Requests compositor-authorized activation using recent input
+    ///   from a focused window on this connection. Requires `xdg_activation_v1`;
+    ///   without eligible input or protocol support this has no effect. The
+    ///   compositor may decline the request.
+    /// - **iOS / Android / Orbital:** Unsupported.
     #[inline]
     pub fn focus_window(&self) {
         let _span = tracing::debug_span!("winit::Window::focus_window",).entered();
