@@ -122,7 +122,7 @@ impl WindowExtWayland for Window {
 
 /// Optional focus-scoped compositor keyboard-shortcut inhibition.
 pub mod keyboard_shortcuts {
-    pub use crate::platform_impl::wayland::keyboard_shortcuts::{Changed,KeyboardShortcutsInhibitor,Status};
+    pub use crate::platform_impl::wayland::keyboard_shortcuts::{Changed,KeyboardShortcutsInhibitor,Status,Recording,RecordingState,RecordingCancelReason};
 }
 
 /// Additional methods on [`WindowAttributes`] that are specific to Wayland.

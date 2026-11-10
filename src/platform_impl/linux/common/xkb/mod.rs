@@ -128,6 +128,57 @@ impl Context {
         self.keymap.as_mut()
     }
 
+    /// Borrow the actual client mask, retaining bits ordinary toolkit events omit.
+    #[cfg(wayland_platform)]
+    pub fn shortcut_modifiers(&self) -> Option<(state::ModifiersState, bool)> {
+        let state = self.state.as_ref()?;
+        let indices = self.keymap.as_ref()?.mods_indices();
+        let recognized = [
+            indices.ctrl,
+            indices.alt,
+            indices.shift,
+            indices.num,
+            indices.logo,
+            indices.caps,
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|index| *index < 32)
+        .fold(0u32, |mask, index| mask | (1u32 << index));
+        Some((
+            state.modifiers(),
+            state.effective_modifiers() & !recognized != 0,
+        ))
+    }
+
+    /// One base-level XKB identifier in the current per-key layout.
+    #[cfg(wayland_platform)]
+    pub fn shortcut_key(&mut self, code: u32) -> Option<String> {
+        let layout = self.state.as_mut()?.layout(code);
+        let symbol = self.keymap.as_mut()?.first_keysym_by_level(layout, code);
+        if symbol == 0 {
+            return None;
+        }
+        let mut name = [0u8; 129];
+        let count =
+            unsafe { (XKBH.xkb_keysym_get_name)(symbol, name.as_mut_ptr().cast(), name.len()) };
+        if count <= 0 || count as usize >= name.len() {
+            return None;
+        }
+        String::from_utf8(name[..count as usize].to_vec()).ok()
+    }
+
+    /// Captured keys must not leave a previous text-field compose sequence alive.
+    #[cfg(wayland_platform)]
+    pub fn clear_shortcut_compose(&mut self) {
+        if let Some(state) = self.compose_state1.as_mut() {
+            state.reset();
+        }
+        if let Some(state) = self.compose_state2.as_mut() {
+            state.reset();
+        }
+    }
+
     #[cfg(wayland_platform)]
     pub fn set_keymap_from_fd(&mut self, fd: OwnedFd, size: usize) {
         let keymap = XkbKeymap::from_fd(&self.context, fd, size);

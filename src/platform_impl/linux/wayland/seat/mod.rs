@@ -63,6 +63,12 @@ impl WinitSeatState {
     pub fn new() -> Self {
         Default::default()
     }
+
+    pub(crate) fn clear_shortcut_compose(&mut self) {
+        if let Some(keyboard) = self.keyboard_state.as_mut() {
+            keyboard.xkb_context.clear_shortcut_compose();
+        }
+    }
 }
 
 impl SeatHandler for WinitState {

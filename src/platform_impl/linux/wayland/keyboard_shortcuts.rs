@@ -1,8 +1,13 @@
 //! Focus-scoped shortcut inhibition on the existing Wayland connection.
 use super::{state::WinitState, WindowId};
 mod policy;
+mod recording;
+mod recording_native;
 pub use policy::Status;
 use policy::{focused_status, Permission};
+pub use recording::{CancelReason as RecordingCancelReason, State as RecordingState};
+pub(crate) use recording::{Key, Modifiers, ALT, CTRL, LOGO, NUM, SHIFT};
+pub use recording_native::Recording;
 use sctk::reexports::client::{
     backend::ObjectId,
     globals::GlobalList,
@@ -73,6 +78,10 @@ struct Seat {
     seat: WlSeat,
     keyboard: bool,
     focus: Option<WindowId>,
+    held: recording::Held,
+    modifiers: Option<recording::Modifiers>,
+    group: Option<u32>,
+    map_ready: bool,
 }
 struct Native {
     proxy: Inhibitor,
@@ -88,6 +97,7 @@ struct Entry {
     surface: WlSurface,
     slot: Arc<Slot>,
     inhibitors: HashMap<ObjectId, Native>,
+    recording: Option<recording_native::Active>,
 }
 struct Inner {
     manager: Manager,
@@ -172,6 +182,10 @@ impl Hub {
                 seat,
                 keyboard: false,
                 focus: None,
+                held: recording::Held::default(),
+                modifiers: None,
+                group: None,
+                map_ready: false,
             });
         }
     }
@@ -187,6 +201,10 @@ impl Hub {
             seat.keyboard = available;
             if !available {
                 seat.focus = None;
+                seat.held.leave();
+                seat.modifiers = None;
+                seat.group = None;
+                seat.map_ready = false;
             }
             if available {
                 let seat = &inner.seats[id];
@@ -213,7 +231,14 @@ impl Hub {
                     entry.inhibitors.remove(id);
                 }
             }
-            refresh(&inner)
+            let mut notifications = Vec::new();
+            recording_native::cancel_all(
+                &mut inner,
+                recording::CancelReason::ProtectionChanged,
+                &mut notifications,
+            );
+            notifications.extend(refresh(&inner));
+            notifications
         };
         notify(notifications);
     }
@@ -224,20 +249,46 @@ impl Hub {
             for entry in inner.windows.values_mut() {
                 entry.inhibitors.remove(id);
             }
-            refresh(&inner)
+            let mut notifications = Vec::new();
+            recording_native::cancel_all(
+                &mut inner,
+                recording::CancelReason::ProtectionChanged,
+                &mut notifications,
+            );
+            notifications.extend(refresh(&inner));
+            notifications
         };
         notify(notifications);
     }
-    pub fn enter(&self, id: &ObjectId, window: WindowId) {
-        let notifications = {
-            let mut inner = self.0.lock().unwrap();
-            if let Some(seat) = inner.seats.get_mut(id) {
-                if seat.keyboard {
-                    seat.focus = Some(window);
+    pub fn enter(&self, id: &ObjectId, window: WindowId, keys: &[u8]) {
+        let notifications =
+            {
+                let mut inner = self.0.lock().unwrap();
+                if let Some(seat) = inner.seats.get_mut(id) {
+                    if seat.keyboard {
+                        seat.focus = Some(window);
+                        seat.modifiers = None;
+                        seat.held.enter(keys.chunks_exact(4).filter_map(|b| {
+                            u32::from_ne_bytes(b.try_into().unwrap()).checked_add(8)
+                        }));
+                        if keys.len() % 4 != 0
+                            || keys
+                                .chunks_exact(4)
+                                .any(|b| u32::from_ne_bytes(b.try_into().unwrap()) > u32::MAX - 8)
+                        {
+                            seat.held.invalidate();
+                        }
+                    }
                 }
-            }
-            refresh(&inner)
-        };
+                let mut notifications = Vec::new();
+                recording_native::cancel_all(
+                    &mut inner,
+                    recording::CancelReason::ProtectionChanged,
+                    &mut notifications,
+                );
+                notifications.extend(refresh(&inner));
+                notifications
+            };
         notify(notifications);
     }
     pub fn leave(&self, id: &ObjectId, window: WindowId) {
@@ -246,9 +297,17 @@ impl Hub {
             if let Some(seat) = inner.seats.get_mut(id) {
                 if seat.focus == Some(window) {
                     seat.focus = None;
+                    seat.held.leave();
                 }
             }
-            refresh(&inner)
+            let mut notifications = Vec::new();
+            recording_native::cancel_all(
+                &mut inner,
+                recording::CancelReason::ProtectionChanged,
+                &mut notifications,
+            );
+            notifications.extend(refresh(&inner));
+            notifications
         };
         notify(notifications);
     }
@@ -275,6 +334,7 @@ impl Hub {
                 surface,
                 slot: slot.clone(),
                 inhibitors: HashMap::new(),
+                recording: None,
             };
             for (id, seat) in &inner.seats {
                 if seat.keyboard {
@@ -307,7 +367,8 @@ impl Hub {
                 .get(&window)
                 .is_some_and(|entry| generation.is_none_or(|g| entry.generation == g))
             {
-                let entry = inner.windows.remove(&window).unwrap();
+                let mut entry = inner.windows.remove(&window).unwrap();
+                recording_native::close_entry(&mut entry, &mut notifications);
                 mark(&entry.slot, Status::Closed, &mut notifications);
             }
             // Ordinary windows are tracked before they request an inhibitor.
@@ -331,7 +392,8 @@ impl Hub {
             }
             inner.closed = true;
             let mut notifications = Vec::new();
-            for (_, entry) in inner.windows.drain() {
+            for (_, mut entry) in inner.windows.drain() {
+                recording_native::close_entry(&mut entry, &mut notifications);
                 mark(&entry.slot, Status::Closed, &mut notifications);
             }
             inner.seats.clear();
@@ -374,8 +436,17 @@ impl Dispatch<Inhibitor, Data> for WinitState {
                 zwp_keyboard_shortcuts_inhibitor_v1::Event::Inactive => Permission::Denied,
                 _ => return,
             };
-            inhibitor.permission = permission;
-            refresh(&inner)
+            let mut notifications = Vec::new();
+            if inhibitor.permission != permission {
+                inhibitor.permission = permission;
+                recording_native::cancel_all(
+                    &mut inner,
+                    recording::CancelReason::ProtectionChanged,
+                    &mut notifications,
+                );
+            }
+            notifications.extend(refresh(&inner));
+            notifications
         };
         notify(notifications);
     }
