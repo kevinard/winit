@@ -39,6 +39,7 @@ use crate::platform_impl::OsError;
 
 /// Winit's Wayland state.
 pub struct WinitState {
+    pub(crate) drag_drop: Option<super::drag_drop::Hub>,
     /// The WlRegistry.
     pub registry_state: RegistryState,
 
@@ -142,9 +143,11 @@ impl WinitState {
         let monitors = output_state.outputs().map(MonitorHandle::new).collect();
 
         let seat_state = SeatState::new(globals, queue_handle);
+        let drag_drop = super::drag_drop::Hub::bind(globals, queue_handle);
 
         let mut seats = AHashMap::default();
         for seat in seat_state.seats() {
+            if let Some(hub) = &drag_drop { hub.add_seat(seat.clone()); }
             seats.insert(seat.id(), WinitSeatState::new());
         }
 
@@ -159,6 +162,7 @@ impl WinitState {
         let custom_cursor_pool = Arc::new(Mutex::new(SlotPool::new(2, &shm).unwrap()));
 
         Ok(Self {
+            drag_drop,
             registry_state,
             compositor_state: Arc::new(compositor_state),
             subcompositor_state: subcompositor_state.map(Arc::new),
@@ -248,6 +252,12 @@ impl WinitState {
         };
 
         updates[pos].close_window = true;
+    }
+}
+
+impl Drop for WinitState {
+    fn drop(&mut self) {
+        if let Some(hub) = self.drag_drop.take() { hub.shutdown(); }
     }
 }
 

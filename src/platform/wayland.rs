@@ -81,9 +81,22 @@ impl<T> EventLoopBuilderExtWayland for EventLoopBuilder<T> {
 pub trait WindowExtWayland {
     /// Returns `xdg_toplevel` of the window or [`None`] if the window is X11 window.
     fn xdg_toplevel(&self) -> Option<NonNull<c_void>>;
+
+    /// Enables data-device drag transport for this window. The callback must
+    /// only wake its consumer; it must not block or perform pipe/filesystem I/O.
+    /// Returns None on another backend, unsupported protocol or duplicate endpoint.
+    fn drag_drop(&self, changed: drag_drop::Changed) -> Option<drag_drop::DragDrop>;
 }
 
 impl WindowExtWayland for Window {
+    fn drag_drop(&self, changed: drag_drop::Changed) -> Option<drag_drop::DragDrop> {
+        match &self.window {
+            #[cfg(x11_platform)]
+            crate::platform_impl::Window::X(_) => { let _ = changed; None },
+            #[cfg(wayland_platform)]
+            crate::platform_impl::Window::Wayland(window) => window.drag_drop(changed),
+        }
+    }
     #[inline]
     fn xdg_toplevel(&self) -> Option<NonNull<c_void>> {
         #[allow(clippy::single_match)]
@@ -94,6 +107,13 @@ impl WindowExtWayland for Window {
             crate::platform_impl::Window::Wayland(window) => window.xdg_toplevel(),
         }
     }
+}
+
+pub mod drag_drop {
+    pub use crate::platform_impl::wayland::drag_drop::{
+        Changed, DragAction, DragActions, DragDrop, Origin, Offer, OfferSnapshot, SendData, Source, SourceSnapshot,
+        PipeTransfer, read_pipe, write_pipe,
+    };
 }
 
 /// Additional methods on [`WindowAttributes`] that are specific to Wayland.

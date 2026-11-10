@@ -40,6 +40,7 @@ pub use state::WindowState;
 
 /// The Wayland window.
 pub struct Window {
+    drag_drop: Option<super::drag_drop::Hub>,
     /// Reference to the underlying SCTK window.
     window: SctkWindow,
 
@@ -217,6 +218,7 @@ impl Window {
         event_loop_awakener.ping();
 
         Ok(Self {
+            drag_drop: state.drag_drop.clone(),
             window,
             display,
             monitors,
@@ -234,6 +236,11 @@ impl Window {
 
     pub(crate) fn xdg_toplevel(&self) -> Option<NonNull<c_void>> {
         NonNull::new(self.window.xdg_toplevel().id().as_ptr().cast())
+    }
+
+    pub(crate) fn drag_drop(&self, changed: super::drag_drop::Changed) -> Option<super::drag_drop::DragDrop> {
+        self.drag_drop.as_ref()?.endpoint(self.window_id, self.window.wl_surface().clone(),
+            Arc::downgrade(&self.window_requests), self.event_loop_awakener.clone(), changed)
     }
 }
 
@@ -717,7 +724,8 @@ impl Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
-        self.window_requests.closed.store(true, Ordering::Relaxed);
+        self.window_requests.closed.store(true, Ordering::Release);
+        if let Some(hub) = &self.drag_drop { hub.close_window(self.window_id); }
         self.event_loop_awakener.ping();
     }
 }
