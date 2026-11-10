@@ -39,6 +39,7 @@ use crate::platform_impl::OsError;
 
 /// Winit's Wayland state.
 pub struct WinitState {
+    pub(crate) keyboard_shortcuts: Option<super::keyboard_shortcuts::Hub>,
     /// The WlRegistry.
     pub registry_state: RegistryState,
 
@@ -142,9 +143,11 @@ impl WinitState {
         let monitors = output_state.outputs().map(MonitorHandle::new).collect();
 
         let seat_state = SeatState::new(globals, queue_handle);
+        let keyboard_shortcuts=super::keyboard_shortcuts::Hub::bind(globals,queue_handle);
 
         let mut seats = AHashMap::default();
         for seat in seat_state.seats() {
+            if let Some(hub)=&keyboard_shortcuts{hub.add_seat(seat.clone());}
             seats.insert(seat.id(), WinitSeatState::new());
         }
 
@@ -159,6 +162,7 @@ impl WinitState {
         let custom_cursor_pool = Arc::new(Mutex::new(SlotPool::new(2, &shm).unwrap()));
 
         Ok(Self {
+            keyboard_shortcuts,
             registry_state,
             compositor_state: Arc::new(compositor_state),
             subcompositor_state: subcompositor_state.map(Arc::new),
@@ -248,6 +252,12 @@ impl WinitState {
         };
 
         updates[pos].close_window = true;
+    }
+}
+
+impl Drop for WinitState {
+    fn drop(&mut self) {
+        if let Some(hub)=self.keyboard_shortcuts.take(){hub.shutdown();}
     }
 }
 
