@@ -566,6 +566,12 @@ impl WindowState {
         !self.seat_focus.is_empty()
     }
 
+    /// Whether the seat which supplied an activation gesture still focuses us.
+    #[inline]
+    pub fn has_seat_focus(&self, seat: &ObjectId) -> bool {
+        self.seat_focus.contains(seat)
+    }
+
     /// Whether the IME is allowed.
     #[inline]
     pub fn ime_allowed(&self) -> bool {

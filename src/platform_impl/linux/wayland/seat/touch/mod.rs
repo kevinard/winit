@@ -21,13 +21,20 @@ impl TouchHandler for WinitState {
         _: &Connection,
         _: &QueueHandle<Self>,
         touch: &WlTouch,
-        _: u32,
+        serial: u32,
         _: u32,
         surface: WlSurface,
         id: i32,
         position: (f64, f64),
     ) {
         let window_id = wayland::make_wid(&surface);
+        if let (Some(activation), Some(window), Some(requests)) = (
+            self.xdg_activation.as_ref(),
+            self.windows.get_mut().get(&window_id),
+            self.window_requests.get_mut().get(&window_id),
+        ) {
+            activation.input.record(window, requests, &touch.seat(), serial);
+        }
         let scale_factor = match self.windows.get_mut().get(&window_id) {
             Some(window) => window.lock().unwrap().scale_factor(),
             None => return,

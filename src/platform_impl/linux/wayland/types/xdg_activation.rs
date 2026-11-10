@@ -20,6 +20,9 @@ use crate::window::ActivationToken;
 
 pub struct XdgActivationState {
     xdg_activation: XdgActivationV1,
+    queue_handle: QueueHandle<WinitState>,
+    pub input: super::focus::Input,
+    pub focus: super::focus::Requests,
 }
 
 impl XdgActivationState {
@@ -28,11 +31,37 @@ impl XdgActivationState {
         queue_handle: &QueueHandle<WinitState>,
     ) -> Result<Self, BindError> {
         let xdg_activation = globals.bind(queue_handle, 1..=1, GlobalData)?;
-        Ok(Self { xdg_activation })
+        Ok(Self {
+            xdg_activation,
+            queue_handle: queue_handle.clone(),
+            input: Default::default(),
+            focus: Default::default(),
+        })
     }
 
     pub fn global(&self) -> &XdgActivationV1 {
         &self.xdg_activation
+    }
+
+    pub fn request_focus(
+        &mut self,
+        window: crate::platform_impl::wayland::WindowId,
+        requests: &std::sync::Arc<crate::platform_impl::wayland::window::WindowRequests>,
+        target: WlSurface,
+        input: super::focus::Request,
+        handle: &calloop::LoopHandle<'static, WinitState>,
+    ) {
+        self.focus.start(
+            &self.xdg_activation,
+            &self.queue_handle,
+            handle,
+            super::focus::Target {
+                window_id: window,
+                requests: std::sync::Arc::downgrade(requests),
+                surface: target,
+            },
+            input,
+        );
     }
 }
 
@@ -62,14 +91,13 @@ impl Dispatch<XdgActivationTokenV1, XdgActivationTokenData, WinitState> for XdgA
             _ => return,
         };
 
-        let global = state
-            .xdg_activation
-            .as_ref()
-            .expect("got xdg_activation event without global.")
-            .global();
-
         match data {
             XdgActivationTokenData::Attention((surface, fence)) => {
+                let global = state
+                    .xdg_activation
+                    .as_ref()
+                    .expect("got xdg_activation event without global.")
+                    .global();
                 global.activate(token, surface);
                 // Mark that no request attention is in process.
                 if let Some(attention_requested) = fence.upgrade() {
@@ -85,9 +113,17 @@ impl Dispatch<XdgActivationTokenV1, XdgActivationTokenData, WinitState> for XdgA
                     *window_id,
                 );
             },
+            XdgActivationTokenData::Focus(serial) => {
+                let handle = state.loop_handle.clone();
+                if let Some(activation) = state.xdg_activation.as_mut() {
+                    activation.focus.finish(*serial, token, &activation.xdg_activation, &handle);
+                }
+            },
         }
 
-        proxy.destroy();
+        if proxy.is_alive() {
+            proxy.destroy();
+        }
     }
 }
 
@@ -97,6 +133,8 @@ pub enum XdgActivationTokenData {
     Attention((WlSurface, Weak<AtomicBool>)),
     /// Get a token to be passed outside of the winit.
     Obtain((WindowId, AsyncRequestSerial)),
+    /// Activate a target using a separately captured user-input source.
+    Focus(u64),
 }
 
 delegate_dispatch!(WinitState: [ XdgActivationV1: GlobalData] => XdgActivationState);
