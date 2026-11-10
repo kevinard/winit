@@ -39,6 +39,7 @@ use crate::platform_impl::OsError;
 
 /// Winit's Wayland state.
 pub struct WinitState {
+    pub(crate) foreign: super::foreign::Manager,
     /// The WlRegistry.
     pub registry_state: RegistryState,
 
@@ -159,6 +160,7 @@ impl WinitState {
         let custom_cursor_pool = Arc::new(Mutex::new(SlotPool::new(2, &shm).unwrap()));
 
         Ok(Self {
+            foreign: super::foreign::Manager::bind(globals, queue_handle),
             registry_state,
             compositor_state: Arc::new(compositor_state),
             subcompositor_state: subcompositor_state.map(Arc::new),
