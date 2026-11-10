@@ -40,6 +40,7 @@ pub use state::WindowState;
 
 /// The Wayland window.
 pub struct Window {
+    foreign_parent: Option<super::foreign::Parent>,
     /// Reference to the underlying SCTK window.
     window: SctkWindow,
 
@@ -126,6 +127,9 @@ impl Window {
                 }
             }
         }
+
+        let foreign_parent = attributes.platform_specific.wayland_foreign_parent.as_ref()
+            .and_then(|(handle, modal)| state.foreign.import(handle, *modal, &window, &queue_handle));
 
         let mut window_state = WindowState::new(
             event_loop_window_target.connection.clone(),
@@ -237,6 +241,7 @@ impl Window {
         event_loop_awakener.ping();
 
         Ok(Self {
+            foreign_parent,
             window,
             display,
             monitors,
@@ -737,6 +742,7 @@ impl Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
+        self.foreign_parent.take();
         self.window_requests.closed.store(true, Ordering::Relaxed);
         self.event_loop_awakener.ping();
     }

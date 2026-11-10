@@ -107,6 +107,10 @@ pub trait WindowAttributesExtWayland {
     /// is retained through creation; the application owns both windows afterward.
     fn with_transient_parent(self, parent: Arc<Window>) -> Self;
 
+    /// Import an xdg-foreign-v2 parent before initial configuration, with an
+    /// optional xdg-dialog-v1 modal hint. Unavailable protocols are ignored.
+    fn with_foreign_parent(self, handle: String, modal: bool) -> Self;
+
     /// Build window with the given name.
     ///
     /// The `general` name sets an application ID, which should match the `.desktop`
@@ -118,6 +122,11 @@ pub trait WindowAttributesExtWayland {
 }
 
 impl WindowAttributesExtWayland for WindowAttributes {
+    fn with_foreign_parent(mut self, handle: String, modal: bool) -> Self {
+        self.platform_specific.wayland_foreign_parent = Some((handle, modal));
+        self
+    }
+
     #[inline]
     fn with_transient_parent(mut self, parent: Arc<Window>) -> Self {
         self.platform_specific.wayland_parent = Some(parent);
