@@ -111,7 +111,7 @@ impl WindowExtWayland for Window {
 
 pub mod drag_drop {
     pub use crate::platform_impl::wayland::drag_drop::{
-        Changed, DragAction, DragActions, DragDrop, Origin, Offer, OfferSnapshot, SendData, Source, SourceSnapshot,
+        Changed, DragAction, DragActions, DragDrop, DragIcon, Origin, Offer, OfferSnapshot, SendData, Source, SourceSnapshot,
         PipeTransfer, read_pipe, write_pipe,
     };
 }
