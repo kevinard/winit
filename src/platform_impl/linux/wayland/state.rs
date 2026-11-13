@@ -143,7 +143,11 @@ impl WinitState {
         let monitors = output_state.outputs().map(MonitorHandle::new).collect();
 
         let seat_state = SeatState::new(globals, queue_handle);
-        let drag_drop = super::drag_drop::Hub::bind(globals, queue_handle);
+        let drag_drop = super::drag_drop::Hub::bind(
+            globals,
+            queue_handle,
+            compositor_state.wl_compositor().clone(),
+        );
 
         let mut seats = AHashMap::default();
         for seat in seat_state.seats() {
