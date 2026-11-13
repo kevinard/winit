@@ -4,11 +4,17 @@
 use super::{state::WinitState, window::WindowRequests, WindowId};
 use calloop::ping::Ping;
 use sctk::{
+    compositor::SurfaceData,
     data_device_manager::DataDeviceManagerState,
+    shm::{
+        slot::{Buffer, SlotPool},
+        Shm,
+    },
     reexports::client::{
         backend::ObjectId,
         globals::GlobalList,
         protocol::{
+            wl_compositor::WlCompositor, wl_shm::Format,
             wl_data_device::WlDataDevice, wl_data_device_manager::DndAction,
             wl_data_offer::WlDataOffer, wl_data_source::WlDataSource, wl_seat::WlSeat,
             wl_surface::WlSurface,
@@ -188,6 +194,8 @@ struct Outgoing {
     seat: ObjectId,
     state: Mutex<SourceState>,
     send: Mutex<Option<SendData>>,
+    /// The drag icon's surface and pixels, released when the drag ends.
+    icon: Mutex<Option<(WlSurface, Buffer)>>,
 }
 #[derive(Clone)]
 pub struct Source(Arc<Outgoing>);
@@ -223,6 +231,35 @@ struct Shared {
     manager: DataDeviceManagerState,
     queue: QueueHandle<WinitState>,
     state: Mutex<State>,
+    /// Drag icons: their surfaces and the shared memory their pixels use.
+    compositor: WlCompositor,
+    shm: Option<Shm>,
+    icons: Mutex<Option<SlotPool>>,
+}
+
+/// A picture that follows the pointer while dragging, in straight
+/// (not premultiplied) RGBA rows, `scale` buffer pixels per logical pixel.
+/// `hotspot` is the logical point of the picture that sits under the pointer.
+#[derive(Clone, Debug)]
+pub struct DragIcon {
+    pub width: u32,
+    pub height: u32,
+    pub scale: u32,
+    pub rgba: Vec<u8>,
+    pub hotspot: (i32, i32),
+}
+
+const MAX_ICON_SIDE: u32 = 1024;
+
+impl DragIcon {
+    fn valid(&self) -> bool {
+        (1..=MAX_ICON_SIDE).contains(&self.width)
+            && (1..=MAX_ICON_SIDE).contains(&self.height)
+            && (1..=4).contains(&self.scale)
+            && self.width % self.scale == 0
+            && self.height % self.scale == 0
+            && self.rgba.len() == (self.width * self.height * 4) as usize
+    }
 }
 #[derive(Clone)]
 pub(crate) struct Hub(Arc<Shared>);
@@ -277,7 +314,11 @@ impl Hub {
         }
     }
 
-    pub fn bind(globals: &GlobalList, queue: &QueueHandle<WinitState>) -> Option<Self> {
+    pub fn bind(
+        globals: &GlobalList,
+        queue: &QueueHandle<WinitState>,
+        compositor: WlCompositor,
+    ) -> Option<Self> {
         let manager = DataDeviceManagerState::bind(globals, queue).ok()?;
         if manager.data_device_manager().version() < 3 {
             return None;
@@ -285,6 +326,10 @@ impl Hub {
         Some(Self(Arc::new(Shared {
             manager,
             queue: queue.clone(),
+            compositor,
+            // Without shared memory, drags still work, without an icon.
+            shm: Shm::bind(globals, queue).ok(),
+            icons: Mutex::new(None),
             state: Mutex::new(State {
                 next: 0,
                 enabled: false,
@@ -526,6 +571,22 @@ impl DragDrop {
         actions: DragActions,
         send: SendData,
     ) -> io::Result<Source> {
+        self.start_with_icon(origin, formats, actions, send, None)
+    }
+
+    /// As [`Self::start`], with `icon` following the pointer until the drag
+    /// ends. An icon the compositor's shared memory cannot hold is left out.
+    pub fn start_with_icon(
+        &self,
+        origin: &Origin,
+        formats: Vec<String>,
+        actions: DragActions,
+        send: SendData,
+        icon: Option<&DragIcon>,
+    ) -> io::Result<Source> {
+        if icon.is_some_and(|icon| !icon.valid()) {
+            return Err(error("Invalid drag icon"));
+        }
         if self.0.closed.load(Ordering::Acquire)
             || !self.0.surface.is_alive()
             || self
@@ -588,7 +649,25 @@ impl DragDrop {
             .device
             .as_ref()
             .ok_or_else(|| error("The drag data device is unavailable"))?;
-        device.start_drag(Some(&native), &self.0.surface, None, press.serial);
+        let icon = icon.and_then(|icon| self.icon_surface(icon));
+        device.start_drag(
+            Some(&native),
+            &self.0.surface,
+            icon.as_ref().map(|(surface, ..)| surface),
+            press.serial,
+        );
+        // The icon's content is committed once it has the drag icon role.
+        if let Some((surface, buffer, (x, y))) = &icon {
+            let (x, y) = (*x, *y);
+            if surface.version() >= 5 {
+                surface.attach(Some(buffer.wl_buffer()), 0, 0);
+                surface.offset(x, y);
+            } else {
+                surface.attach(Some(buffer.wl_buffer()), x, y);
+            }
+            surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
+            surface.commit();
+        }
         press.consumed.store(true, Ordering::Release);
         let key = native.id();
         let source = Source(Arc::new(Outgoing {
@@ -605,10 +684,48 @@ impl DragDrop {
                 },
             }),
             send: Mutex::new(Some(send)),
+            icon: Mutex::new(icon.map(|(surface, buffer, _)| (surface, buffer))),
         }));
         state.sources.insert(key, source.clone());
         self.0.ping.ping();
         Ok(source)
+    }
+}
+
+impl DragDrop {
+    /// A surface showing `icon`, with the offset that puts its hotspot under
+    /// the pointer. `None` when shared memory is unavailable or exhausted.
+    fn icon_surface(&self, icon: &DragIcon) -> Option<(WlSurface, Buffer, (i32, i32))> {
+        let hub = &self.0.hub.0;
+        let shm = hub.shm.as_ref()?;
+        let mut pool = hub.icons.lock().unwrap();
+        let bytes = (icon.width * icon.height * 4) as usize;
+        if pool.is_none() {
+            *pool = SlotPool::new(bytes, shm).ok();
+        }
+        let pool = pool.as_mut()?;
+        let (buffer, canvas) = pool
+            .create_buffer(
+                icon.width as i32,
+                icon.height as i32,
+                4 * icon.width as i32,
+                Format::Argb8888,
+            )
+            .ok()?;
+        for (pixel, rgba) in canvas.chunks_exact_mut(4).zip(icon.rgba.chunks_exact(4)) {
+            // Shared memory pixels are premultiplied ARGB, little endian.
+            let alpha = u32::from(rgba[3]);
+            let channel = |value: u8| u32::from(value) * alpha / 255;
+            let color = (alpha << 24)
+                | (channel(rgba[0]) << 16)
+                | (channel(rgba[1]) << 8)
+                | channel(rgba[2]);
+            pixel.copy_from_slice(&color.to_le_bytes());
+        }
+        let surface =
+            hub.compositor.create_surface(&hub.queue, SurfaceData::new(None, icon.scale as i32));
+        surface.set_buffer_scale(icon.scale as i32);
+        Some((surface, buffer, (-icon.hotspot.0, -icon.hotspot.1)))
     }
 }
 
@@ -644,6 +761,11 @@ impl Source {
             }
         }
         self.0.send.lock().unwrap().take();
+        if let Some((surface, _buffer)) = self.0.icon.lock().unwrap().take() {
+            if surface.is_alive() {
+                surface.destroy();
+            }
+        }
         self.0.endpoint.ping.ping();
         (self.0.endpoint.changed)();
     }
@@ -770,5 +892,27 @@ impl Offer {
             (endpoint.changed)();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::DragIcon;
+
+    #[test]
+    fn drag_icons_need_whole_scaled_sides_and_one_rgba_pixel_each() {
+        let icon = |width, height, scale, bytes| DragIcon {
+            width,
+            height,
+            scale,
+            rgba: vec![0; bytes],
+            hotspot: (0, 0),
+        };
+        assert!(icon(48, 32, 1, 48 * 32 * 4).valid());
+        assert!(icon(96, 64, 2, 96 * 64 * 4).valid());
+        assert!(!icon(95, 64, 2, 95 * 64 * 4).valid());
+        assert!(!icon(48, 32, 1, 48 * 32 * 3).valid());
+        assert!(!icon(0, 32, 1, 0).valid());
+        assert!(!icon(2048, 1, 1, 2048 * 4).valid());
     }
 }
