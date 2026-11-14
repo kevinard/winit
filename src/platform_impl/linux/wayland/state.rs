@@ -281,6 +281,11 @@ impl ShmHandler for WinitState {
 impl WindowHandler for WinitState {
     fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, window: &Window) {
         let window_id = super::make_wid(window.wl_surface());
+        // A retired window's role can outlive it (see `configure`); its
+        // application already dropped it, so there is nothing to close.
+        if !self.windows.get_mut().contains_key(&window_id) {
+            return;
+        }
         Self::queue_close(&mut self.window_compositor_updates, window_id);
     }
 
@@ -294,6 +299,16 @@ impl WindowHandler for WinitState {
     ) {
         let window_id = super::make_wid(window.wl_surface());
 
+        // The application may already have dropped this window while its xdg
+        // role is still alive, for example as the source of a pending
+        // input-bound activation that must outlive it. The compositor can still
+        // configure that role; there is no window state left to update.
+        let Some(window_state) = self.windows.get_mut().get(&window_id) else {
+            return;
+        };
+        let resized =
+            window_state.lock().unwrap().configure(configure, &self.shm, &self.subcompositor_state);
+
         let pos = if let Some(pos) =
             self.window_compositor_updates.iter().position(|update| update.window_id == window_id)
         {
@@ -304,14 +319,7 @@ impl WindowHandler for WinitState {
         };
 
         // Populate the configure to the window.
-        self.window_compositor_updates[pos].resized |= self
-            .windows
-            .get_mut()
-            .get_mut(&window_id)
-            .expect("got configure for dead window.")
-            .lock()
-            .unwrap()
-            .configure(configure, &self.shm, &self.subcompositor_state);
+        self.window_compositor_updates[pos].resized |= resized;
 
         // NOTE: configure demands wl_surface::commit, however winit doesn't commit on behalf of the
         // users, since it can break a lot of things, thus it'll ask users to redraw instead.
